@@ -1,110 +1,59 @@
-const { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, SlashCommandBuilder, REST, Routes, EmbedBuilder, Events } = require('discord.js');
-const dotenv = require('dotenv');
-dotenv.config();
+import { Client, GatewayIntentBits, ButtonBuilder, ButtonStyle, ActionRowBuilder, EmbedBuilder, Events } from 'discord.js';
+import 'dotenv/config';
 
-const client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
-    partials: [Partials.Channel]
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+
+client.once(Events.ClientReady, c => {
+    console.log(`Bot iniciado: ${c.user.tag}`);
 });
 
-client.once(Events.ClientReady, () => {
-    console.log(`Bot iniciado: ${client.user.tag}`);
-});
-
-// Comando slash
-const commands = [
-    new SlashCommandBuilder()
-        .setName('pedido')
-        .setDescription('Registrar un pedido')
-        .addStringOption(option =>
-            option.setName('nombre')
-                .setDescription('Nombre del cliente')
-                .setRequired(true))
-        .addStringOption(option =>
-            option.setName('establecimiento')
-                .setDescription('Nombre del establecimiento')
-                .setRequired(true))
-        .addStringOption(option =>
-            option.setName('productos')
-                .setDescription('Productos con cantidad separados por ; ejemplo: cerveza 2; whisky 1')
-                .setRequired(true))
-        .addStringOption(option =>
-            option.setName('fecha')
-                .setDescription('Fecha del pedido')
-                .setRequired(true))
-].map(command => command.toJSON());
-
-const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
-
-(async () => {
-    try {
-        console.log('Registrando comandos...');
-        await rest.put(
-            Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
-            { body: commands }
-        );
-        console.log('Comando registrado correctamente.');
-    } catch (error) {
-        console.error(error);
-    }
-})();
-
-// Escuchar comandos slash
 client.on(Events.InteractionCreate, async interaction => {
-    if (!interaction.isChatInputCommand()) return;
 
-    if (interaction.commandName === 'pedido') {
-        const nombre = interaction.options.getString('nombre');
-        const establecimiento = interaction.options.getString('establecimiento');
-        const productosRaw = interaction.options.getString('productos');
-        const fecha = interaction.options.getString('fecha');
+    if (interaction.isChatInputCommand()) {
+        if (interaction.commandName === 'pedido') {
+            const nombre = interaction.options.getString('nombre');
+            const establecimiento = interaction.options.getString('establecimiento');
+            const pedidos = interaction.options.getString('pedidos');
+            const fecha = new Date().toLocaleDateString();
 
-        const productos = productosRaw.split(';').map(p => p.trim());
+            await interaction.deferReply({ ephemeral: true });
 
-        const embed = new EmbedBuilder()
-            .setTitle('📦 Nuevo Pedido')
-            .setDescription(`**Cliente:** ${nombre}\n**Establecimiento:** ${establecimiento}\n**Fecha:** ${fecha}`)
-            .addFields({ name: 'Productos', value: productos.join('\n') })
-            .setColor('Blue');
+            const canal = interaction.guild.channels.cache.find(c => c.name === establecimiento);
+            if (!canal) return interaction.editReply({ content: `❌ No se encontró el canal "${establecimiento}"` });
 
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('completo').setLabel('✅ Completado').setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId('cancelado').setLabel('❌ Cancelado').setStyle(ButtonStyle.Danger),
-            new ButtonBuilder().setCustomId('pendiente').setLabel('⏳ Pendiente').setStyle(ButtonStyle.Primary)
-        );
+            const embed = new EmbedBuilder()
+                .setTitle('📦 Pedido Nuevo')
+                .setDescription(`**Cliente:** ${nombre}\n**Establecimiento:** ${establecimiento}\n**Pedidos:**\n${pedidos.replace(/;/g, '\n')}\n**Fecha:** ${fecha}`)
+                .setColor('Blue');
 
-        try {
-            await interaction.reply({ embeds: [embed], components: [row] });
-        } catch (error) {
-            console.error('Error enviando mensaje:', error);
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder().setCustomId('reclamar').setLabel('Reclamar').setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder().setCustomId('empaquetado').setLabel('Empaquetado').setStyle(ButtonStyle.Secondary),
+                    new ButtonBuilder().setCustomId('entregado').setLabel('Entregado').setStyle(ButtonStyle.Success),
+                );
+
+            await canal.send({ embeds: [embed], components: [row] });
+            await interaction.editReply({ content: `✅ Pedido enviado al canal ${canal.name}` });
         }
     }
-});
 
-// Escuchar botones
-client.on(Events.InteractionCreate, async interaction => {
-    if (!interaction.isButton()) return;
+    if (interaction.isButton()) {
+        const embed = interaction.message.embeds[0];
+        const newRow = ActionRowBuilder.from(interaction.message.components[0]);
 
-    const embed = interaction.message.embeds[0];
-    let nuevoEstado = '';
+        const index = newRow.components.findIndex(b => b.data.custom_id === interaction.customId);
+        newRow.components[index].setDisabled(true);
 
-    switch (interaction.customId) {
-        case 'completo':
-            nuevoEstado = '✅ Completado';
-            break;
-        case 'cancelado':
-            nuevoEstado = '❌ Cancelado';
-            break;
-        case 'pendiente':
-            nuevoEstado = '⏳ Pendiente';
-            break;
-    }
+        let status = '';
+        if (interaction.customId === 'reclamar') status = '🟡 Pedido reclamado';
+        if (interaction.customId === 'empaquetado') status = '🟠 Pedido empaquetado';
+        if (interaction.customId === 'entregado') status = '✅ Pedido entregado';
 
-    try {
-        await interaction.update({ embeds: [EmbedBuilder.from(embed).setFooter({ text: nuevoEstado })], components: interaction.message.components });
-    } catch (error) {
-        console.error(error);
+        const newEmbed = EmbedBuilder.from(embed).setFooter({ text: status });
+
+        await interaction.update({ embeds: [newEmbed], components: [newRow] });
     }
 });
 
-client.login(process.env.TOKEN);
+client.login(process.env.DISCORD_TOKEN);
