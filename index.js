@@ -135,4 +135,15 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
+// Mantener vivo en Render
+import express from 'express';
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => res.send('🤖 Bot activo y funcionando en Render!'));
+
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🌐 Servidor HTTP activo en puerto: ${PORT}`);
+});
+
 client.login(process.env.TOKEN);
